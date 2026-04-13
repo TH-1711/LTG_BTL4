@@ -1,0 +1,18 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.tiled-project
+*.tiled-session
+
+# Claude AI working directory
+.claude/
+
+# Assignment documents
+BTL*.md
+
+# Old codebase versions
+LTG_BTL4/
+
+# Unity-related files
+unity_stuff/
