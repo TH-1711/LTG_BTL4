@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import os
 
 # Map dimensions
-COLS, ROWS = 20, 10
+COLS, ROWS = 15, 8
 TILE_SIZE = 40  # Smaller for editor view
 
 # Terrain types

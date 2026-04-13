@@ -32,7 +32,7 @@ def load_map_from_text(filepath):
         lines = [line.rstrip('\n') for line in f if line.strip() and not line.startswith('#')]
 
     # Expected dimensions
-    cols, rows = 20, 10
+    cols, rows = 15, 8
 
     # Initialize grid
     grid = [[TERRAIN_EMPTY for _ in range(rows)] for _ in range(cols)]

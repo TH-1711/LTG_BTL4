@@ -62,11 +62,14 @@ from PIL import Image, ImageTk
 # ═══════════════════════════════════════════════════════════════
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════
-COLS, ROWS = 20, 10
-TILE       = 52           # px per cell
-PANEL_W    = 234          # right info panel width
+COLS, ROWS = 15, 8
+TILE       = 52
+
+PANEL_W    = 494
+BOTTOM_BAR = 176
+
 WIN_W      = COLS * TILE + PANEL_W
-WIN_H      = ROWS * TILE + 72   # +72 for bottom action bar
+WIN_H      = ROWS * TILE + BOTTOM_BAR
 
 TERRAIN_EMPTY = 0
 TERRAIN_ROCK  = 1
@@ -80,8 +83,8 @@ TYPE_WARRIOR = "WARRIOR"
 TYPE_ARCHER  = "ARCHER"
 
 UNIT_STATS = {
-    TYPE_TANK:    dict(hp=10, move=3, can_attack=False, damage=0, sym="⬡", label="Tank"),
-    TYPE_WARRIOR: dict(hp=5,  move=5, can_attack=True,  damage=2, sym="⚔", label="Warrior"),
+    TYPE_TANK:    dict(hp=10, move=5, can_attack=False, damage=0, sym="⬡", label="Tank"),
+    TYPE_WARRIOR: dict(hp=5,  move=7, can_attack=True,  damage=2, sym="⚔", label="Warrior"),
     TYPE_ARCHER:  dict(hp=3,  move=2, can_attack=True,  damage=1, sym="◈", label="Archer"),
 }
 
@@ -143,7 +146,7 @@ ARROW_STEPS = 8     # animation steps for arrow flight
 # row 8: .  .  .  .  .  .  ~  .  #  .  .  .  .  ~  .  .  .  .  .  .
 # row 9: .  .  #  .  .  .  ~  .  .  #  .  .  .  ~  .  .  #  .  .  .
 
-def _build_map():
+def _build_map(fpath=None):
     """
     Load map from file if available, otherwise use default
 
@@ -153,7 +156,7 @@ def _build_map():
     3. Use map_loader.py format (see MAP_EDITOR_GUIDE.md)
     """
     # SET THIS to load custom maps (or None for default)
-    MAP_FILE = "maps/battlefield_01.txt"  # or None to use default
+    MAP_FILE = f"maps/{fpath}" if fpath else "maps/battlefield_01.txt"  # or None to use default
 
     if MAP_FILE and os.path.exists(MAP_FILE):
         try:
@@ -187,7 +190,7 @@ def _build_map():
     bridges = {(6,4),(6,5),(13,4),(13,5)}
     return grid, bridges
 
-HARDCODED_MAP, BRIDGE_TILES = _build_map()   # Load map once at import
+HARDCODED_MAP, BRIDGE_TILES = _build_map()  
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -292,7 +295,7 @@ class GameState:
         return tiles
 
     # ── Archer free-vector ray ────────────────────────────────────────────────
-    def archer_ray(self, x0, y0, tx, ty):
+    def archer_ray(self, archer, x0, y0, tx, ty):
         """
         Cast a straight arrow from (x0,y0) toward (tx,ty).
         Direction is a continuous vector — not snapped to 8 dirs.
@@ -323,7 +326,9 @@ class GameState:
             if self.blocks_arrow(cx, cy): break          # rock — stop exclusive
             tiles.append((cx, cy))
             hit = self.get_unit_at(cx, cy)
-            if hit is not None: break                    # unit — stop inclusive
+            if hit is not None: 
+                if archer.owner != hit.owner:
+                    break                    # unit — stop inclusive
         return tiles
 
     # ── Legal actions ─────────────────────────────────────────────────────────
@@ -342,7 +347,7 @@ class GameState:
             elif u.type == TYPE_ARCHER:
                 for e in self.units:
                     if not e.alive or e.owner == u.owner: continue
-                    ray = self.archer_ray(u.x, u.y, e.x, e.y)
+                    ray = self.archer_ray(u, u.x, u.y, e.x, e.y)
                     for rx, ry in ray:
                         hit = self.get_unit_at(rx, ry)
                         if hit and hit.owner != u.owner:
@@ -369,7 +374,7 @@ class GameState:
                     if t and t.owner != u.owner:
                         t.hp = max(0, t.hp - dmg)
                 elif u.type == TYPE_ARCHER:
-                    ray = ns.archer_ray(u.x, u.y, action.tx, action.ty)
+                    ray = ns.archer_ray(u, u.x, u.y, action.tx, action.ty)
                     for rx, ry in ray:
                         hit = ns.get_unit_at(rx, ry)
                         if hit and hit.owner != u.owner:
@@ -411,14 +416,38 @@ class GameState:
 # ═══════════════════════════════════════════════════════════════
 # INITIAL STATE
 # ═══════════════════════════════════════════════════════════════
+import random
+
+def _structured_spawns(grid, cols, rows, n_units=5):
+    # Collect valid tiles theo zone
+    human_zone = [
+        (x, y)
+        for x in range(0, 3)
+        for y in range(rows)
+        if grid[x][y] == TERRAIN_EMPTY
+    ]
+
+    ai_zone = [
+        (x, y)
+        for x in range(cols - 3, cols)
+        for y in range(rows)
+        if grid[x][y] == TERRAIN_EMPTY
+    ]
+
+    # Safety check (rất quan trọng)
+    if len(human_zone) < n_units or len(ai_zone) < n_units:
+        raise ValueError("Not enough valid spawn tiles")
+
+    # Chọn ngẫu nhiên không trùng
+    spawns_h = random.sample(human_zone, n_units)
+    spawns_a = random.sample(ai_zone, n_units)
+
+    return spawns_h, spawns_a
 def make_initial_state():
     Unit._next_id = 1
-    # Human spawns left side
-    spawns_h = [(1,1),(1,5),(1,8),(2,3),(2,7)]
-    types_h  = [TYPE_TANK, TYPE_WARRIOR, TYPE_WARRIOR, TYPE_TANK, TYPE_ARCHER]
-    # AI spawns right side
-    spawns_a = [(18,1),(18,5),(18,8),(17,3),(17,7)]
+    spawns_h, spawns_a = _structured_spawns(HARDCODED_MAP,COLS, ROWS)
     types_a  = [TYPE_TANK, TYPE_WARRIOR, TYPE_WARRIOR, TYPE_TANK, TYPE_ARCHER]
+    types_h  = [TYPE_TANK, TYPE_WARRIOR, TYPE_WARRIOR, TYPE_TANK, TYPE_ARCHER]
 
     units = []
     for utype, (x, y) in zip(types_h, spawns_h):
@@ -435,16 +464,58 @@ def evaluate(state, fp):
     if state.is_terminal():
         w = state.winner()
         return 10000 if w==fp else (-10000 if w is not None else 0)
-    opp    = 1 - fp
-    my_hp  = sum(u.hp for u in state.units if u.owner==fp)
-    op_hp  = sum(u.hp for u in state.units if u.owner==opp)
-    my_n   = sum(1    for u in state.units if u.owner==fp)
-    op_n   = sum(1    for u in state.units if u.owner==opp)
-    score  = (my_hp - op_hp)*2 + (my_n - op_n)*10
-    my_us  = [u for u in state.units if u.owner==fp]
-    op_us  = [u for u in state.units if u.owner==opp]
-    if my_us and op_us:
-        score -= sum(min(abs(m.x-e.x)+abs(m.y-e.y) for e in op_us) for m in my_us) * 0.08
+
+    opp = 1 - fp
+
+    my_units = [u for u in state.units if u.owner == fp]
+    op_units = [u for u in state.units if u.owner == opp]
+
+    # ── 1. UNIT COUNT (high priority) ──
+    my_n = len(my_units)
+    op_n = len(op_units)
+    unit_score = (my_n - op_n) * 15   # ↑ từ 10 → 15
+
+    # ── 2. WEIGHTED HP ──
+    def weighted_hp(u):
+        if u.type == TYPE_TANK: return u.hp * 1
+        if u.type == TYPE_WARRIOR: return u.hp * 1.5
+        if u.type == TYPE_ARCHER: return u.hp * 3
+        return u.hp
+
+    my_hp = sum(weighted_hp(u) for u in my_units)
+    op_hp = sum(weighted_hp(u) for u in op_units)
+    hp_score = (my_hp - op_hp) * 2   # giữ nhẹ
+
+    # ── 3. ARCHER SURVIVAL BONUS ──
+    my_archers = sum(1 for u in my_units if u.type == TYPE_ARCHER)
+    op_archers = sum(1 for u in op_units if u.type == TYPE_ARCHER)
+    archer_score = (my_archers - op_archers) * 12
+
+    # ── 4. WARRIOR DISTANCE (encourage engage) ──
+    warrior_score = 0
+    for u in my_units:
+        if u.type != TYPE_WARRIOR: continue
+        if not op_units: break
+        d = min(abs(u.x - e.x) + abs(u.y - e.y) for e in op_units)
+        warrior_score -= d * 0.5   # gần → ít bị trừ
+
+    # ── 5. GENERAL DISTANCE (very light) ──
+    dist_score = 0
+    if my_units and op_units:
+        dist_score -= sum(
+            min(abs(m.x-e.x)+abs(m.y-e.y) for e in op_units)
+            for m in my_units
+        ) * 0.05
+
+    # ── FINAL SCORE ──
+    score = (
+        unit_score +
+        hp_score +
+        archer_score +
+        warrior_score +
+        dist_score
+    )
+
     return score
 
 
@@ -550,7 +621,7 @@ class App(tk.Tk):
         self.canvas.pack()
 
         self.engine  = GameEngine()
-        self.ai      = MCTSAI(600)   # swap to MinimaxAI() if desired
+        self.ai      = MCTSAI(200)   # swap to MinimaxAI() if desired
 
         # Load sprites
         self.imgs = self._load_sprites()
@@ -586,7 +657,8 @@ class App(tk.Tk):
 
         self.log = []
 
-        self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Button-1>", self._on_left_click)
+        self.canvas.bind("<Button-3>", self._on_right_click)
         self.canvas.bind("<Motion>",   self._on_mouse)
         self.bind("<Escape>", self._on_escape)
 
@@ -633,7 +705,12 @@ class App(tk.Tk):
             for i in range(10):
                 path = os.path.join(assets_dir, f"{terrain_type}_{i}.png")
                 if os.path.exists(path):
-                    variations.append(ImageTk.PhotoImage(Image.open(path)))
+                    if terrain_type != "tile_bridge" and terrain_type != "tile_river":
+                        variations.append(ImageTk.PhotoImage(Image.open(path)))
+                    else:
+                        variations.append(
+                            ImageTk.PhotoImage(Image.open(path).transpose(Image.ROTATE_90))
+                        )
 
             if variations:
                 imgs[terrain_type] = variations
@@ -698,6 +775,19 @@ class App(tk.Tk):
     # ─────────────────────────────────────────────────────────────────────────
     def _clear(self): self.canvas.delete("all")
 
+    def _get_unit_sprite(self, unit_type, owner=0):
+        sprite_key = f"{unit_type.lower()}_p{owner+1}"
+        anim_key = f"{sprite_key}_anim"
+
+        if anim_key in self.imgs:
+            frames = self.imgs[anim_key]
+            frame_idx = self.anim_frame % len(frames)
+            return frames[frame_idx]
+        elif sprite_key in self.imgs:
+            return self.imgs[sprite_key]
+
+        return None
+
     def _draw_menu(self):
         self._clear(); self.screen = "menu"
         c, W, H = self.canvas, WIN_W, WIN_H
@@ -718,17 +808,35 @@ class App(tk.Tk):
         c.tag_bind("btn_cont", "<Button-1>",lambda e: self._continue())
         c.tag_bind("btn_exit", "<Button-1>",lambda e: self.quit())
 
+        # === Unit legend with sprites ===
+        cx = W // 2
         ly = H - 100
-        c.create_text(W//2, ly,    text="⬡ Tank  ⚔ Warrior  ◈ Archer",
-                      font=("Courier",12), fill=C_DIM)
-        c.create_text(W//2, ly+22, text="≈ River (cross at ╫ ford)   ▲ Rock (blocks all)",
-                      font=("Courier",11), fill=C_DIM)
-        c.create_text(W//2, ly+44, text="Archer: move mouse to aim free-vector arrow, click to fire",
-                      font=("Courier",10), fill="#283848")
-        c.create_text(W//2, ly+66, text="AI actions are animated — watch what the enemy does",
-                      font=("Courier",10), fill="#283848")
-        c.create_text(W//2, ly+88, text="ESC = pause",
-                      font=("Courier",9), fill="#1e2830")
+
+        spacing = 140
+        start_x = cx - spacing
+
+        units = [("tank", "Tank"), ("warrior", "Warrior"), ("archer", "Archer")]
+
+        for i, (utype, label) in enumerate(units):
+            x = start_x + i * spacing
+
+            sprite = self._get_unit_sprite(utype, owner=0)
+
+            if sprite:
+
+                if not hasattr(self, "_menu_sprites"):
+                    self._menu_sprites = []
+                self._menu_sprites.append(sprite)
+
+                c.create_image(x - 25, ly, image=sprite)  # sprite bên trái text
+            else:
+                fallback = {"tank": "⬡", "warrior": "⚔", "archer": "◈"}
+                c.create_text(x - 25, ly, text=fallback[utype],
+                            font=("Courier",12), fill=C_DIM)
+
+
+            c.create_text(x + 15, ly, text=label,
+                        font=("Courier",12), fill=C_DIM, anchor="w")
 
     def _mbtn(self, text, cx, cy, tag):
         c = self.canvas
@@ -954,12 +1062,21 @@ class App(tk.Tk):
 
             if i < u.hp:
                 # Filled segment - color based on health ratio
-                ratio = u.hp / max_hp
-                hc = C_HP_OK if ratio > 0.6 else (C_HP_MID if ratio > 0.3 else C_HP_LOW)
-                c.create_rectangle(sx, by2, sx + seg_w, by2 + bar_h, fill=hc, outline="")
-            else:
-                # Empty segment - dark
-                c.create_rectangle(sx, by2, sx + seg_w, by2 + bar_h, fill="#1a1a1a", outline="")
+                for i in range(max_hp):
+                    sx = bx + i * (seg_w + seg_gap)
+
+                    if i < u.hp:
+                        if u.owner != PLAYER_HUMAN:
+                            # AI → luôn đỏ
+                            hc = C_HP_LOW
+                        else:
+                            # Player → giữ logic cũ
+                            ratio = u.hp / max_hp
+                            hc = C_HP_OK if ratio > 0.6 else (C_HP_MID if ratio > 0.3 else C_HP_LOW)
+
+                        c.create_rectangle(sx, by2, sx + seg_w, by2 + bar_h, fill=hc, outline="")
+                    else:
+                        c.create_rectangle(sx, by2, sx + seg_w, by2 + bar_h, fill="#1a1a1a", outline="")
 
     # ── AI action overlay ─────────────────────────────────────────────────────
     def _render_ai_overlay(self, c):
@@ -1031,22 +1148,32 @@ class App(tk.Tk):
     def _draw_action_bar(self, c, gs):
         bar_y  = ROWS*TILE
         grid_w = COLS*TILE
-        c.create_rectangle(0,bar_y,grid_w,WIN_H, fill="#07090f", outline="")
+
+        # 🎯 XÁC ĐỊNH MÀU DUY NHẤT
+        if self.ai_anim or self.arrow_anim:
+            bar_color = "#3a0000"   # đỏ đậm khi AI đang đánh
+        elif gs.current_player == PLAYER_AI:
+            bar_color = "#220000"   # đỏ nhẹ AI
+        else:
+            bar_color = "#001a22"   # xanh player
+
+        # ✅ CHỈ VẼ 1 LẦN DUY NHẤT
+        c.create_rectangle(0, bar_y, grid_w, WIN_H, fill=bar_color, outline="")
 
         # During AI turn or AI animation
         if gs.current_player==PLAYER_AI or self.ai_anim or self.arrow_anim:
             lbl = "AI IS ACTING..." if (self.ai_anim or self.arrow_anim) else "AI THINKING..."
             col = "#ff8844" if (self.ai_anim or self.arrow_anim) else C_P2
             c.create_text(12, bar_y+20, text=lbl, anchor="w",
-                          font=("Courier",14,"bold"), fill=col)
+                          font=("Courier",18,"bold"), fill=col)
             if self.ai_anim:
                 lbl2 = self.ai_anim.get("label","")
                 c.create_text(12, bar_y+44, text=lbl2, anchor="w",
-                              font=("Courier",11), fill="#ffccaa")
+                              font=("Courier",14), fill="#ffccaa")
             else:
                 c.create_text(12, bar_y+44,
                               text=f"Actions remaining: {gs.remaining_actions}",
-                              anchor="w", font=("Courier",11), fill=C_DIM)
+                              anchor="w", font=("Courier",14), fill=C_DIM)
             return
 
         if self.sel_unit and gs.current_player==PLAYER_HUMAN:
@@ -1067,18 +1194,18 @@ class App(tk.Tk):
                 hint = f"{unit_name} ({u.hp}/{u.max_hp} HP) — Click green tile to move"
 
             c.create_text(bx+120, bar_y+30, text=hint, anchor="w",
-                          font=("Courier",11), fill=C_DIM)
+                          font=("Courier",14), fill=C_DIM)
         else:
             c.create_text(12, bar_y+20, text="YOUR TURN", anchor="w",
-                          font=("Courier",14,"bold"), fill=C_P1)
+                          font=("Courier",18,"bold"), fill=C_P1)
             c.create_text(12, bar_y+44,
                           text=f"Actions remaining: {gs.remaining_actions}  — click one of your units",
-                          anchor="w", font=("Courier",11), fill=C_DIM)
+                          anchor="w", font=("Courier",14), fill=C_DIM)
 
     def _abtn(self, c, x, y, text, tag):
         c.create_rectangle(x,y,x+108,y+48, fill="#0c1620",
                             outline=C_ACC, width=2, tags=tag)
-        c.create_text(x+54,y+24, text=text, font=("Courier",12,"bold"),
+        c.create_text(x+54,y+24, text=text, font=("Courier",18,"bold"),
                       fill=C_ACC, tags=tag)
 
     # ── Right panel ───────────────────────────────────────────────────────────
@@ -1086,7 +1213,7 @@ class App(tk.Tk):
         px = COLS*TILE; pw = PANEL_W
         c.create_rectangle(px,0,WIN_W,WIN_H, fill=C_PANEL, outline=C_GRID)
         c.create_text(px+pw//2, 15, text="GRID WARS",
-                      font=("Courier",12,"bold"), fill=C_ACC)
+                      font=("Courier",18,"bold"), fill=C_ACC)
         who = "Human" if gs.current_player==PLAYER_HUMAN else "AI"
         col = C_P1    if gs.current_player==PLAYER_HUMAN else C_P2
         c.create_text(px+10, 36,
@@ -1158,9 +1285,9 @@ class App(tk.Tk):
             tx, ty = e.x//TILE, e.y//TILE
             u = self.gs._unit_by_id(self.sel_unit.id)
             if u and self.gs.in_bounds(tx, ty):
-                self.arrow_ray = self.gs.archer_ray(u.x, u.y, tx, ty)
+                self.arrow_ray = self.gs.archer_ray(u, u.x, u.y, tx, ty)
 
-    def _on_click(self, e):
+    def _on_left_click(self, e):  # LEFT CLICK = ATTACK
         if self.screen != "game": return
         gs = self.gs
         if gs.current_player != PLAYER_HUMAN: return
@@ -1169,78 +1296,87 @@ class App(tk.Tk):
         tx, ty = self._tile_at(e)
         if tx is None: return
 
-        # No mode active - check if selecting a unit or clicking on valid action tile
         clicked_unit = gs.get_unit_at(tx, ty)
 
-        # If clicking on your own unit, select it and show all ranges
-        if clicked_unit and clicked_unit.owner==PLAYER_HUMAN:
+        # 1. Select unit
+        if clicked_unit and clicked_unit.owner == PLAYER_HUMAN:
             self.sel_unit = clicked_unit
-            self.mode = "both"  # Show both move and attack ranges
-            # Calculate and show move range (green)
             self.hl_move = gs.reachable_tiles(clicked_unit)
-            # Calculate and show attack range (red)
-            if clicked_unit.type == TYPE_WARRIOR:
-                self.hl_attack = gs.warrior_attack_tiles(clicked_unit)
-            elif clicked_unit.type == TYPE_ARCHER:
-                # For archers, we'll show attack when they aim
-                self.hl_attack = []
-            else:
-                self.hl_attack = []
+            self.hl_attack = []
             self.arrow_ray = []
-            self._log(f"Selected {UNIT_STATS[clicked_unit.type]['label']} — Click to move/attack")
+            self._log(f"Selected {UNIT_STATS[clicked_unit.type]['label']} — Left: attack | Right: move")
             return
 
-        # If we have a unit selected and clicking on an empty/enemy tile
-        if self.sel_unit:
-            u = gs._unit_by_id(self.sel_unit.id)
-            if not u:
-                self._cancel()
-                return
+        # 2. Attack nếu đã chọn unit
+        if not self.sel_unit:
+            return
 
-            # Check if clicking on move range
-            if (tx, ty) in self.hl_move:
-                self._apply_human(MoveAction(u.id, tx, ty))
-                return
+        u = gs._unit_by_id(self.sel_unit.id)
+        if not u:
+            self._cancel()
+            return
 
-            # Check if clicking on attack range (for warriors)
-            if (tx, ty) in self.hl_attack and u.type == TYPE_WARRIOR:
+        # Warrior attack
+        if u.type == TYPE_WARRIOR:
+            if (tx, ty) in gs.warrior_attack_tiles(u):
                 target = gs.get_unit_at(tx, ty)
                 if target and target.owner == PLAYER_AI:
                     self._apply_human(AttackAction(u.id, tx, ty))
                 else:
                     self._log("No enemy there.")
-                return
+            return
 
-            # For archers, any click fires arrow if path is valid
-            if u.type == TYPE_ARCHER:
-                ray = gs.archer_ray(u.x, u.y, tx, ty)
-                if ray:
-                    action = AttackAction(u.id, tx, ty)
-                    self._cancel()
-                    self._play_arrow(ray, C_P1, lambda: self._apply_human(action))
-                else:
-                    self._log("Can't fire arrow there.")
-                return
+        # Archer attack
+        if u.type == TYPE_ARCHER:
+            ray = gs.archer_ray(u, u.x, u.y, tx, ty)
+            if ray:
+                action = AttackAction(u.id, tx, ty)
+                self._cancel()
+                self._play_arrow(ray, C_P1, lambda: self._apply_human(action))
+            else:
+                self._log("Can't fire there.")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # ARROW ANIMATION  (shared for human and AI)
-    # ─────────────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────
+        # ARROW ANIMATION  (shared for human and AI)
+        # ─────────────────────────────────────────────────────────────────────────
     def _play_arrow(self, ray, color, on_done):
-        """Start arrow animation, call on_done() when finished."""
-        self.arrow_anim = {"ray": ray, "step": 0, "color": color, "on_done": on_done}
-        delay = max(35, 280 // max(len(ray), 1))
-        self._step_arrow(delay)
+            """Start arrow animation, call on_done() when finished."""
+            self.arrow_anim = {"ray": ray, "step": 0, "color": color, "on_done": on_done}
+            delay = max(35, 280 // max(len(ray), 1))
+            self._step_arrow(delay)
 
     def _step_arrow(self, delay):
-        aa = self.arrow_anim
-        if not aa: return
-        aa["step"] += 1
-        if aa["step"] >= len(aa["ray"]):
-            cb = aa.get("on_done")
-            self.arrow_anim = None
-            if cb: cb()
+            aa = self.arrow_anim
+            if not aa: return
+            aa["step"] += 1
+            if aa["step"] >= len(aa["ray"]):
+                cb = aa.get("on_done")
+                self.arrow_anim = None
+                if cb: cb()
+            else:
+                self.after(delay, lambda: self._step_arrow(delay))
+
+    def _on_right_click(self, e):  # RIGHT CLICK = MOVE
+        if self.screen != "game": return
+        gs = self.gs
+        if gs.current_player != PLAYER_HUMAN: return
+        if self.ai_anim or self.arrow_anim: return
+
+        tx, ty = self._tile_at(e)
+        if tx is None: return
+
+        if not self.sel_unit:
+            return
+
+        u = gs._unit_by_id(self.sel_unit.id)
+        if not u:
+            self._cancel()
+            return
+
+        if (tx, ty) in self.hl_move:
+            self._apply_human(MoveAction(u.id, tx, ty))
         else:
-            self.after(delay, lambda: self._step_arrow(delay))
+            self._log("Can't move there.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # HUMAN ACTION
@@ -1317,7 +1453,7 @@ class App(tk.Tk):
         if isinstance(action, AttackAction):
             u = gs_sb._unit_by_id(action.unit_id)
             if u and u.type == TYPE_ARCHER:
-                ray = gs_sb.archer_ray(u.x, u.y, action.tx, action.ty)
+                ray = gs_sb.archer_ray(u, u.x, u.y, action.tx, action.ty)
                 if ray:
                     # Show anim, then apply after arrow lands
                     self._play_arrow(ray, C_P2, lambda a=action: self._ai_apply(a))
@@ -1336,5 +1472,8 @@ class App(tk.Tk):
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    import sys
+    args = sys.argv[1:]
+    HARDCODED_MAP, BRIDGE_TILES = _build_map(args[0] if args else None)
     app = App()
     app.mainloop()
