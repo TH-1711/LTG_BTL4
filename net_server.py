@@ -59,21 +59,27 @@ class GameServer:
                 active = self.gs.current_player
                 try:
                     msg = recv_msg(self.socks[active])
-                except ConnectionError:
-                    print(f"[server] Player {active} disconnected")
+                except (ConnectionError, OSError) as e:
+                    print(f"[server] Player {active} disconnected: {e}")
                     break
 
+                print(f"[server] Received from player {active}: type={msg.get('type')}")
                 if msg.get("type") != "action":
                     continue
 
                 action = dict_to_action(msg["action"])
+                print(f"[server] Action: {msg['action']}")
 
-                with self.lock:
-                    if self.gs.current_player != active:
-                        continue
-                    prev_bridges = getattr(self.gs, "bridge_tiles", BRIDGE_TILES)
-                    self.gs = self.engine.apply(self.gs, action)
-                    self.gs.bridge_tiles = prev_bridges
+                try:
+                    with self.lock:
+                        if self.gs.current_player != active:
+                            continue
+                        prev_bridges = getattr(self.gs, "bridge_tiles", BRIDGE_TILES)
+                        self.gs = self.engine.apply(self.gs, action)
+                        self.gs.bridge_tiles = prev_bridges
+                except Exception as e:
+                    import traceback; traceback.print_exc()
+                    continue
 
                 if self.gs.is_terminal():
                     winner = self.gs.winner()
